@@ -10,9 +10,11 @@
   .wrap{max-width:980px;margin:40px auto;padding:0 20px}
   .card{background:var(--card);border:1px solid #1f2b4a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:20px 22px;margin-bottom:18px}
   h1{font-weight:700;font-size:22px;margin:0 0 6px}
+  h2{font-weight:700;font-size:18px;margin:0 0 6px}
   p.sub{color:var(--muted);margin:0 0 18px}
   label{display:block;margin:8px 0 4px;color:#bcd0ff}
-  input,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #263455;background:#0f1730;color:var(--ink)}
+  input,select,textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #263455;background:#0f1730;color:var(--ink)}
+  textarea{min-height:220px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   button{appearance:none;border:0;border-radius:12px;background:linear-gradient(90deg,#3ba9ff,#46c2ff);color:#07203a;font-weight:700;padding:12px 16px;cursor:pointer}
   .btns{display:flex;gap:10px;flex-wrap:wrap}
@@ -21,13 +23,17 @@
   th{color:#bcd0ff;font-weight:600}
   code.small{background:#0f1730;border:1px solid #22325b;border-radius:8px;padding:2px 6px}
   .muted{color:var(--muted)}
+  .btn-ghost{background:#1a2a4d;color:#cfe0ff}
+  #packageStatus.ok{color:#10b981}
+  #packageStatus.err{color:#ef4444}
 </style>
 </head>
 <body>
   <div class="wrap">
+    <!-- CSV Generator Card -->
     <div class="card">
       <h1>Campaign Composer → Asana CSV</h1>
-      <p class="sub">Generates an Asana-importable task list for a 3-week campaign (blogs, emails, social, paid, QA). FDA-friendly phrasing by default.</p>
+      <p class="sub">Generates an Asana-importable task list for a 3–4 week campaign (blogs, emails, social, paid, QA). FDA-friendly phrasing by default.</p>
       <div class="row">
         <div>
           <label for="project">Project name</label>
@@ -61,19 +67,44 @@
       </div>
       <div class="btns" style="margin-top:14px">
         <button id="gen">Generate CSV</button>
-        <button id="preview" style="background:#1a2a4d;color:#cfe0ff">Preview table</button>
+        <button id="preview" class="btn-ghost">Preview table</button>
         <a id="download" download="campaign_composer_asana.csv" style="display:none"><button>Download CSV</button></a>
       </div>
       <div id="note" class="muted" style="margin-top:10px"></div>
     </div>
 
+    <!-- Preview Card -->
     <div class="card">
-      <h2 style="margin:0 0 10px">Preview</h2>
+      <h2>Preview</h2>
       <div class="muted" style="margin-bottom:10px">Asana accepts CSV with columns like: <code class="small">Task Name</code>, <code class="small">Assignee</code>, <code class="small">Section/Column</code>, <code class="small">Due Date</code>, <code class="small">Notes</code>, <code class="small">Dependencies</code>, <code class="small">Projects</code>.</div>
       <div id="tableWrap"></div>
     </div>
+
+    <!-- Full Campaign Package (ZIP) Card -->
+    <div class="card">
+      <h2>Full Campaign Package</h2>
+      <p class="muted" style="margin:0 0 12px">Paste the “Campaign Package JSON” from Campaign Composer to download a full ZIP (Overview, Plan, Cadence, Asana CSV, and all content files).</p>
+      <textarea id="packageJson" placeholder='{
+  "meta": { "campaignTitle": "OneQA Safety & Compliance Sprint", "createdUtc": "2025-11-03T00:00:00Z" },
+  "overviewMd": "# Campaign Overview\\n...",
+  "contentPlanMd": "# Content Plan\\n...",
+  "cadenceMd": "# Campaign Cadence\\n...",
+  "asana": { "csv": "Task Name,Assignee,Section/Column,Due Date,Notes,Dependencies,Projects\\n..." },
+  "files": [ { "path":"Blogs/example.md","content":"..." } ]
+}'></textarea>
+      <div class="btns" style="margin-top:12px">
+        <button id="generateZipBtn">Generate ZIP</button>
+        <button id="downloadCsvBtn" class="btn-ghost">Download Asana CSV Only</button>
+      </div>
+      <div id="packageStatus" class="muted" style="margin-top:8px"></div>
+    </div>
   </div>
 
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+<!-- Existing CSV Generator Logic -->
 <script>
 const OWNERS = {
   content: "Erin Ward",
@@ -148,40 +179,36 @@ document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownl
 })();
 </script>
 
-  <script>
+<!-- Full Package (ZIP) Logic -->
+<script>
 (function(){
   const $ = (sel) => document.querySelector(sel);
 
   function parseJsonSafely(text) {
     try { return JSON.parse(text); } catch(e) { return null; }
   }
-
   function sanitizePath(p) {
     // Basic path guard; ensures no leading slashes and normalizes backslashes.
     return String(p || '').replace(/^[\\/]+/, '').replace(/\\/g, '/');
   }
-
-  function textToBlob(content, mime='text/plain;charset=utf-8') {
-    return new Blob([content ?? ''], { type: mime });
-  }
-
   function buildCsvFromAsana(asana) {
-    // If csv provided, use it; else if tasks array provided, convert.
-    if (asana && typeof asana.csv === 'string' && asana.csv.trim().length) {
-      return asana.csv;
-    }
+    // If csv provided, use it; else if tasks array provided, convert to Asana-friendly headers.
+    if (asana && typeof asana.csv === 'string' && asana.csv.trim().length) return asana.csv;
     const tasks = Array.isArray(asana?.tasks) ? asana.tasks : [];
-    const cols = ["Task Name","Assignee","Section","Due Date","Notes","Dependencies","Project"];
+    const cols = ["Task Name","Assignee","Section/Column","Due Date","Notes","Dependencies","Projects"];
     const lines = [cols.join(",")];
     for (const t of tasks) {
+      const projectVal = (t.projects ?? t.project ?? "");
+      const notesVal = String(t.notes ?? "").replace(/\n/g, " ").replace(/"/g, '""');
+      const depsVal = Array.isArray(t.dependencies) ? t.dependencies.join("; ") : (t.dependencies ?? "");
       const row = [
-        t.taskName ?? "",
+        t.taskName ?? t.name ?? "",
         t.assignee ?? "",
         t.section ?? "",
-        t.dueDate ?? "",
-        (t.notes ?? "").replace(/\n/g, " ").replace(/"/g, '""'),
-        Array.isArray(t.dependencies) ? t.dependencies.join("; ") : (t.dependencies ?? ""),
-        t.project ?? ""
+        t.dueDate ?? t.due ?? "",
+        notesVal,
+        depsVal,
+        projectVal
       ].map(v => `"${String(v).replace(/"/g,'""')}"`);
       lines.push(row.join(","));
     }
@@ -210,9 +237,7 @@ document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownl
         const parts = cleanPath.split("/");
         const fileName = parts.pop() || "file.txt";
         let folder = root;
-        if (parts.length) {
-          folder = parts.reduce((acc, seg) => acc.folder(seg), root);
-        }
+        if (parts.length) folder = parts.reduce((acc, seg) => acc.folder(seg), root);
         folder.file(fileName, f.content ?? "");
       }
     }
@@ -222,45 +247,34 @@ document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownl
     saveAs(blob, `${title}.zip`);
   }
 
-  function handleGenerateZip() {
+  function setStatus(msg, type="") {
     const status = $("#packageStatus");
-    status.textContent = "";
+    status.textContent = msg;
+    status.classList.remove("ok","err");
+    if (type === "ok") status.classList.add("ok");
+    if (type === "err") status.classList.add("err");
+  }
+
+  function handleGenerateZip() {
+    setStatus("");
     const raw = $("#packageJson").value.trim();
     const pkg = parseJsonSafely(raw);
-    if (!pkg) {
-      status.textContent = "Invalid JSON. Please paste a valid Campaign Package JSON block.";
-      status.style.color = "#b91c1c";
-      return;
-    }
+    if (!pkg) return setStatus("Invalid JSON. Please paste a valid Campaign Package JSON block.", "err");
     generateZip(pkg)
-      .then(() => { status.textContent = "ZIP generated."; status.style.color = "#065f46"; })
-      .catch(err => {
-        console.error(err);
-        status.textContent = "Error generating ZIP.";
-        status.style.color = "#b91c1c";
-      });
+      .then(() => setStatus("ZIP generated.", "ok"))
+      .catch(err => { console.error(err); setStatus("Error generating ZIP.", "err"); });
   }
 
   function handleDownloadCsvOnly() {
-    const status = $("#packageStatus");
-    status.textContent = "";
+    setStatus("");
     const raw = $("#packageJson").value.trim();
     const pkg = parseJsonSafely(raw);
-    if (!pkg) {
-      status.textContent = "Invalid JSON. Please paste a valid Campaign Package JSON block.";
-      status.style.color = "#b91c1c";
-      return;
-    }
+    if (!pkg) return setStatus("Invalid JSON. Please paste a valid Campaign Package JSON block.", "err");
     const csv = (pkg.asana && pkg.asana.csv) ? pkg.asana.csv : buildCsvFromAsana(pkg.asana || {});
-    if (!csv || !csv.trim().length) {
-      status.textContent = "No CSV detected in JSON.";
-      status.style.color = "#b91c1c";
-      return;
-    }
+    if (!csv || !csv.trim().length) return setStatus("No CSV detected in JSON.", "err");
     const title = (pkg.meta?.campaignTitle || "Asana_Tasks").replace(/[^\w\-]+/g,'_');
     saveAs(new Blob([csv], {type: "text/csv;charset=utf-8"}), `${title}.csv`);
-    status.textContent = "CSV downloaded.";
-    status.style.color = "#065f46";
+    setStatus("CSV downloaded.", "ok");
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -271,22 +285,6 @@ document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownl
   });
 })();
 </script>
-
-
-  <!-- Add near the bottom of <body>, before your main script -->
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
-
-<section style="margin-top:24px;border-top:1px solid #e5e7eb;padding-top:16px;">
-  <h2>Full Campaign Package</h2>
-  <p>Paste the “Campaign Package JSON” from Campaign Composer:</p>
-  <textarea id="packageJson" style="width:100%;height:220px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;"></textarea>
-  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-    <button id="generateZipBtn">Generate ZIP</button>
-    <button id="downloadCsvBtn">Download Asana CSV Only</button>
-  </div>
-  <div id="packageStatus" style="margin-top:8px;color:#4b5563;"></div>
-</section>
 
 </body>
 </html>
