@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Campaign Composer → Asana CSV</title>
+<style>
+  :root { --bg:#0b1320; --card:#121a2b; --ink:#eaf0ff; --muted:#98a6c7; --accent:#46c2ff; }
+  body{margin:0;background:linear-gradient(180deg,#0b1320,#0b1320 60%,#0d1830);color:var(--ink);font:14px/1.4 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:980px;margin:40px auto;padding:0 20px}
+  .card{background:var(--card);border:1px solid #1f2b4a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:20px 22px;margin-bottom:18px}
+  h1{font-weight:700;font-size:22px;margin:0 0 6px}
+  p.sub{color:var(--muted);margin:0 0 18px}
+  label{display:block;margin:8px 0 4px;color:#bcd0ff}
+  input,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #263455;background:#0f1730;color:var(--ink)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  button{appearance:none;border:0;border-radius:12px;background:linear-gradient(90deg,#3ba9ff,#46c2ff);color:#07203a;font-weight:700;padding:12px 16px;cursor:pointer}
+  .btns{display:flex;gap:10px;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  th,td{border-bottom:1px solid #243258;padding:8px 10px;text-align:left}
+  th{color:#bcd0ff;font-weight:600}
+  code.small{background:#0f1730;border:1px solid #22325b;border-radius:8px;padding:2px 6px}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Campaign Composer → Asana CSV</h1>
+      <p class="sub">Generates an Asana-importable task list for a 3-week campaign (blogs, emails, social, paid, QA). FDA-friendly phrasing by default.</p>
+      <div class="row">
+        <div>
+          <label for="project">Project name</label>
+          <input id="project" value="Electrical Safety LTC – Nov 2025" />
+        </div>
+        <div>
+          <label for="start">Campaign start date</label>
+          <input id="start" type="date" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="duration">Duration (weeks)</label>
+          <select id="duration">
+            <option value="3" selected>3 weeks</option>
+            <option value="4">4 weeks</option>
+          </select>
+        </div>
+        <div>
+          <label for="timezone">Timezone (for due dates)</label>
+          <select id="timezone">
+            <option value="America/Los_Angeles" selected>America/Los_Angeles</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Default owners</label>
+          <div class="muted">Content: <code class="small">Erin Ward</code> • Review: <code class="small">Julee Jarvie</code> • Email: <code class="small">Dan Wold</code> • Social: <code class="small">Nichol Neff</code> • Paid: <code class="small">Tyler (LiftAI)</code></div>
+        </div>
+      </div>
+      <div class="btns" style="margin-top:14px">
+        <button id="gen">Generate CSV</button>
+        <button id="preview" style="background:#1a2a4d;color:#cfe0ff">Preview table</button>
+        <a id="download" download="campaign_composer_asana.csv" style="display:none"><button>Download CSV</button></a>
+      </div>
+      <div id="note" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px">Preview</h2>
+      <div class="muted" style="margin-bottom:10px">Asana accepts CSV with columns like: <code class="small">Task Name</code>, <code class="small">Assignee</code>, <code class="small">Section/Column</code>, <code class="small">Due Date</code>, <code class="small">Notes</code>, <code class="small">Dependencies</code>, <code class="small">Projects</code>.</div>
+      <div id="tableWrap"></div>
+    </div>
+  </div>
+
+<script>
+const OWNERS = {
+  content: "Erin Ward",
+  review: "Julee Jarvie",
+  email: "Dan Wold",
+  social: "Nichol Neff",
+  paid: "Tyler (LiftAI)",
+};
+
+const TEMPLATE = (project) => ([
+  { name: 'Draft Blog 1: Why PCREE Testing Matters', assignee: OWNERS.content, section: 'Content Creation', offset: 2, notes: 'Educational intro; long-term care focus; FDA-compliant language', depends: '' },
+  { name: 'Review Blog 1', assignee: OWNERS.review, section: 'Review', offset: 6, notes: 'Tone + compliance check; link to ESA landing', depends: 'Draft Blog 1: Why PCREE Testing Matters' },
+  { name: 'Draft Blog 2: Benefits of Owning an ESA', assignee: OWNERS.content, section: 'Content Creation', offset: 7, notes: 'Proactive checks between inspections; electric bed frequency table', depends: '' },
+  { name: 'Review Blog 2', assignee: OWNERS.review, section: 'Review', offset: 9, notes: 'Approve for web; verify claims and phrasing', depends: 'Draft Blog 2: Benefits of Owning an ESA' },
+  { name: 'Finalize Email 1 (to Blog 1)', assignee: OWNERS.email, section: 'Email', offset: 3, notes: 'Subject: Do your beds meet NFPA 99 standards? Load in Eloqua.', depends: 'Review Blog 1' },
+  { name: 'Finalize Email 2 (to Blog 2)', assignee: OWNERS.email, section: 'Email', offset: 8, notes: 'Subject: Between inspections? Stay audit-ready. Include product CTA.', depends: 'Review Blog 2' },
+  { name: 'Finalize Email 3 (Checklist CTA)', assignee: OWNERS.email, section: 'Email', offset: 13, notes: 'Subject: Your electrical safety checklist for survey success.', depends: '' },
+  { name: 'Schedule Social Post 1 (LinkedIn)', assignee: OWNERS.social, section: 'Social', offset: 3, notes: 'Awareness: What PCREE means for nursing homes. Link to Blog 1.', depends: 'Finalize Email 1 (to Blog 1)' },
+  { name: 'Schedule Social Post 2 (LinkedIn/Facebook)', assignee: OWNERS.social, section: 'Social', offset: 8, notes: 'Consideration: ESA ownership value. Link to Blog 2.', depends: 'Finalize Email 2 (to Blog 2)' },
+  { name: 'Schedule Social Post 3 (LinkedIn/X)', assignee: OWNERS.social, section: 'Social', offset: 13, notes: 'Conversion: Checklist promo. Pair with Email 3.', depends: 'Finalize Email 3 (Checklist CTA)' },
+  { name: 'Launch Paid Ads (LinkedIn + Display)', assignee: OWNERS.paid, section: 'Paid Media', offset: 8, notes: 'LI Sponsored Content + 300x250 Display; target LTC admins; UTM params', depends: 'Schedule Social Post 2 (LinkedIn/Facebook)' },
+  { name: 'QA Final Rollout', assignee: OWNERS.content, section: 'QA', offset: 16, notes: 'Confirm all links, UTMs, and tracking domains; capture screenshots', depends: 'Launch Paid Ads (LinkedIn + Display)' },
+].map(t => ({...t, projects: project})));
+
+const fmt = (d)=> d.toISOString().slice(0,10);
+function addDays(base, n){ const d = new Date(base); d.setDate(d.getDate()+n); return d; }
+function toCSV(rows){
+  const esc = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v ?? '');
+  const header = ["Task Name","Assignee","Section/Column","Due Date","Notes","Dependencies","Projects"];
+  return [header.join(",")].concat(rows.map(r=>[
+    esc(r.name),esc(r.assignee),esc(r.section),esc(r.due),esc(r.notes),esc(r.depends),esc(r.projects)
+  ].join(","))).join("\n");
+}
+function buildRows(project, startDate, extra=0){
+  return TEMPLATE(project).map(t => ({...t, due: fmt(addDays(startDate, t.offset + extra))}));
+}
+
+const $ = s => document.querySelector(s);
+const projectEl = $("#project"), startEl = $("#start"), durationEl = $("#duration"), noteEl = $("#note"), tableWrap = $("#tableWrap"), genBtn = $("#gen"), previewBtn = $("#preview"), dl = $("#download");
+
+function renderTable(rows){
+  const head = `<tr><th>Task Name</th><th>Assignee</th><th>Section</th><th>Due Date</th><th>Notes</th><th>Dependencies</th><th>Projects</th></tr>`;
+  const body = rows.map(r=>`<tr><td>${r.name}</td><td>${r.assignee}</td><td>${r.section}</td><td>${r.due}</td><td>${r.notes}</td><td>${r.depends}</td><td>${r.projects}</td></tr>`).join("");
+  tableWrap.innerHTML = `<table>${head}${body}</table>`;
+}
+function getStartOrToday(){
+  const v = startEl.value;
+  if (v) return new Date(v+"T00:00:00");
+  const now = new Date(); const day = now.getDay();
+  if (day===6) now.setDate(now.getDate()+2);
+  if (day===0) now.setDate(now.getDate()+1);
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+function buildAndMaybeDownload(download=false){
+  const project = projectEl.value.trim() || "Untitled Campaign";
+  const start = getStartOrToday();
+  const extra = (durationEl.value === "4") ? 4 : 0;
+  const rows = buildRows(project, start, extra);
+  renderTable(rows);
+  noteEl.textContent = `Generated ${rows.length} tasks. Start date = ${rows[0]?.due || '—'}.`;
+  const csv = toCSV(rows);
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  dl.href = url; dl.style.display = "inline-block";
+  if (download){ dl.click(); setTimeout(()=>URL.revokeObjectURL(url), 3000); }
+}
+document.querySelector("#preview").addEventListener("click", ()=> buildAndMaybeDownload(false));
+document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownload(true));
+(function initStart(){
+  const today = new Date(); const y = today.getFullYear(); const m = String(today.getMonth()+1).padStart(2,'0'); const d = String(today.getDate()).padStart(2,'0');
+  startEl.value = `${y}-${m}-${d}`;
+})();
+</script>
+</body>
+</html>
