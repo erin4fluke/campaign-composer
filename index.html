@@ -147,5 +147,146 @@ document.querySelector("#gen").addEventListener("click", ()=> buildAndMaybeDownl
   startEl.value = `${y}-${m}-${d}`;
 })();
 </script>
+
+  <script>
+(function(){
+  const $ = (sel) => document.querySelector(sel);
+
+  function parseJsonSafely(text) {
+    try { return JSON.parse(text); } catch(e) { return null; }
+  }
+
+  function sanitizePath(p) {
+    // Basic path guard; ensures no leading slashes and normalizes backslashes.
+    return String(p || '').replace(/^[\\/]+/, '').replace(/\\/g, '/');
+  }
+
+  function textToBlob(content, mime='text/plain;charset=utf-8') {
+    return new Blob([content ?? ''], { type: mime });
+  }
+
+  function buildCsvFromAsana(asana) {
+    // If csv provided, use it; else if tasks array provided, convert.
+    if (asana && typeof asana.csv === 'string' && asana.csv.trim().length) {
+      return asana.csv;
+    }
+    const tasks = Array.isArray(asana?.tasks) ? asana.tasks : [];
+    const cols = ["Task Name","Assignee","Section","Due Date","Notes","Dependencies","Project"];
+    const lines = [cols.join(",")];
+    for (const t of tasks) {
+      const row = [
+        t.taskName ?? "",
+        t.assignee ?? "",
+        t.section ?? "",
+        t.dueDate ?? "",
+        (t.notes ?? "").replace(/\n/g, " ").replace(/"/g, '""'),
+        Array.isArray(t.dependencies) ? t.dependencies.join("; ") : (t.dependencies ?? ""),
+        t.project ?? ""
+      ].map(v => `"${String(v).replace(/"/g,'""')}"`);
+      lines.push(row.join(","));
+    }
+    return lines.join("\n");
+  }
+
+  async function generateZip(pkg) {
+    const zip = new JSZip();
+    const root = zip.folder("Campaign_Kit");
+
+    // Top-level markdown files
+    if (pkg.overviewMd) root.file("Campaign_Overview.md", pkg.overviewMd);
+    if (pkg.contentPlanMd) root.file("Content_Plan.md", pkg.contentPlanMd);
+    if (pkg.cadenceMd) root.file("Campaign_Cadence.md", pkg.cadenceMd);
+
+    // CSV (either provided as csv string or constructed from tasks)
+    const csv = buildCsvFromAsana(pkg.asana || {});
+    if (csv && csv.trim().length) {
+      root.file("Asana_Tasks.csv", csv);
+    }
+
+    // Content files
+    if (Array.isArray(pkg.files)) {
+      for (const f of pkg.files) {
+        const cleanPath = sanitizePath(f.path);
+        const parts = cleanPath.split("/");
+        const fileName = parts.pop() || "file.txt";
+        let folder = root;
+        if (parts.length) {
+          folder = parts.reduce((acc, seg) => acc.folder(seg), root);
+        }
+        folder.file(fileName, f.content ?? "");
+      }
+    }
+
+    const title = (pkg.meta?.campaignTitle || "Campaign_Kit").replace(/[^\w\-]+/g,'_');
+    const blob = await zip.generateAsync({ type: "blob" });
+    saveAs(blob, `${title}.zip`);
+  }
+
+  function handleGenerateZip() {
+    const status = $("#packageStatus");
+    status.textContent = "";
+    const raw = $("#packageJson").value.trim();
+    const pkg = parseJsonSafely(raw);
+    if (!pkg) {
+      status.textContent = "Invalid JSON. Please paste a valid Campaign Package JSON block.";
+      status.style.color = "#b91c1c";
+      return;
+    }
+    generateZip(pkg)
+      .then(() => { status.textContent = "ZIP generated."; status.style.color = "#065f46"; })
+      .catch(err => {
+        console.error(err);
+        status.textContent = "Error generating ZIP.";
+        status.style.color = "#b91c1c";
+      });
+  }
+
+  function handleDownloadCsvOnly() {
+    const status = $("#packageStatus");
+    status.textContent = "";
+    const raw = $("#packageJson").value.trim();
+    const pkg = parseJsonSafely(raw);
+    if (!pkg) {
+      status.textContent = "Invalid JSON. Please paste a valid Campaign Package JSON block.";
+      status.style.color = "#b91c1c";
+      return;
+    }
+    const csv = (pkg.asana && pkg.asana.csv) ? pkg.asana.csv : buildCsvFromAsana(pkg.asana || {});
+    if (!csv || !csv.trim().length) {
+      status.textContent = "No CSV detected in JSON.";
+      status.style.color = "#b91c1c";
+      return;
+    }
+    const title = (pkg.meta?.campaignTitle || "Asana_Tasks").replace(/[^\w\-]+/g,'_');
+    saveAs(new Blob([csv], {type: "text/csv;charset=utf-8"}), `${title}.csv`);
+    status.textContent = "CSV downloaded.";
+    status.style.color = "#065f46";
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const genBtn = document.getElementById("generateZipBtn");
+    const csvBtn = document.getElementById("downloadCsvBtn");
+    if (genBtn) genBtn.addEventListener("click", handleGenerateZip);
+    if (csvBtn) csvBtn.addEventListener("click", handleDownloadCsvOnly);
+  });
+})();
+</script>
+
+
+  <!-- Add near the bottom of <body>, before your main script -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+<section style="margin-top:24px;border-top:1px solid #e5e7eb;padding-top:16px;">
+  <h2>Full Campaign Package</h2>
+  <p>Paste the “Campaign Package JSON” from Campaign Composer:</p>
+  <textarea id="packageJson" style="width:100%;height:220px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;"></textarea>
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+    <button id="generateZipBtn">Generate ZIP</button>
+    <button id="downloadCsvBtn">Download Asana CSV Only</button>
+  </div>
+  <div id="packageStatus" style="margin-top:8px;color:#4b5563;"></div>
+</section>
+
 </body>
 </html>
